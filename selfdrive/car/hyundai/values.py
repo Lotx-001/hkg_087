@@ -750,8 +750,14 @@ FW_VERSIONS = {
     (Ecu.engine, 0x7e0, None) : [
       b'\xf1\x816H6G5051\000\000\000\000\000\000\000\000'
     ]
-  }
-}
+ },
+  CAR.K7: {
+    (Ecu.eps, 0x7d4, None): [b'\xf1\000YG  MDPS C 1.00 1.00 99800-F6563 4YGAC100',],
+    (Ecu.fwdCamera, 0x7c4, None): [b'\xf1\000IG MFC  1.00 1.00 95740-F9200 180915',],
+    (Ecu.fwdRadar, 0x7d0, None): [ b'\xf1\x00YG__ SCC F_CUP   1.01 1.02 96400-F6000     \xf1\xa01.01',],
+  },
+} 
+
 
 CHECKSUM = {
   "crc8": [CAR.SANTA_FE, CAR.SONATA, CAR.PALISADE, CAR.SONATA_HEV, CAR.SELTOS, CAR.ELANTRA_2021, CAR.ELANTRA_HEV_2021],
