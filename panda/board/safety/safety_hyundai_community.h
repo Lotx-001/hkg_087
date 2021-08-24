@@ -24,8 +24,8 @@ const CanMsg HYUNDAI_COMMUNITY_TX_MSGS[] = {
 // older hyundai models have less checks due to missing counters and checksums
 AddrCheckStruct hyundai_community_rx_checks[] = {
   {.msg = {{608, 0, 8, .check_checksum = true, .max_counter = 3U, .expected_timestep = 10000U},
-           {881, 0, 8, .expected_timestep = 10000U}, { 0 }}},
-  {.msg = {{902, 0, 8, .expected_timestep = 20000U}, { 0 }, { 0 }}},
+           {881, 0, 8, .expected_timestep = 10000U}}},
+  {.msg = {{902, 0, 8, .expected_timestep = 20000U}}},
   // {.msg = {{916, 0, 8, .expected_timestep = 20000U}}}, some Santa Fe does not have this msg, need to find alternative
 };
 const int HYUNDAI_COMMUNITY_RX_CHECK_LEN = sizeof(hyundai_community_rx_checks) / sizeof(hyundai_community_rx_checks[0]);
@@ -146,7 +146,7 @@ static int hyundai_community_tx_hook(CAN_FIFOMailBox_TypeDef *to_send) {
   if (addr == 832) {
     OP_LKAS_live = 20;
     int desired_torque = ((GET_BYTES_04(to_send) >> 16) & 0x7ff) - 1024;
-    uint32_t ts = microsecond_timer_get();
+    uint32_t ts = TIM2->CNT;
     bool violation = 0;
 
     if (controls_allowed) {
@@ -287,7 +287,7 @@ static void hyundai_community_init(int16_t param) {
   controls_allowed = false;
   relay_malfunction_reset();
 
-  if (current_board->has_obd && HKG_forward_obd) {
+  if (board_has_obd() && HKG_forward_obd) {
     current_board->set_can_mode(CAN_MODE_OBD_CAN2);
     puts("  MDPS or SCC on OBD2 CAN: setting can mode obd\n");
   }
