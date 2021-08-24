@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import numpy as np
+
 from cereal import car
 from selfdrive.config import Conversions as CV
 from selfdrive.car.hyundai.values import Ecu, ECU_FINGERPRINT, CAR, FINGERPRINTS, Buttons, FEATURES
@@ -35,128 +37,21 @@ class CarInterface(CarInterfaceBase):
     # Most Hyundai car ports are community features for now
     ret.communityFeature = True
 
-    ret.steerActuatorDelay = 0.1  # Default delay
-    ret.steerRateCost = 0.5
-    ret.steerLimitTimer = 0.8
     tire_stiffness_factor = 1.
-
-    ret.maxSteeringAngleDeg = 90.
-    ret.startAccel = 1.0
 
     eps_modified = False
     for fw in car_fw:
       if fw.ecu == "eps" and b"," in fw.fwVersion:
         eps_modified = True
 
-    # genesis
-    if candidate == CAR.GENESIS:
-      ret.mass = 1900. + STD_CARGO_KG
-      ret.wheelbase = 3.01
-    elif candidate == CAR.GENESIS_G70:
-      ret.mass = 1640. + STD_CARGO_KG
-      ret.wheelbase = 2.84
-    elif candidate == CAR.GENESIS_G80:
-      ret.mass = 1855. + STD_CARGO_KG
-      ret.wheelbase = 3.01
-    elif candidate == CAR.GENESIS_G90:
-      ret.mass = 2200
-      ret.wheelbase = 3.15
-    elif candidate == CAR.GENESIS_G90_L:
-      ret.mass = 2290
-      ret.wheelbase = 3.45
-    # hyundai
-    elif candidate in [CAR.SANTA_FE]:
-      ret.mass = 1694 + STD_CARGO_KG
-      ret.wheelbase = 2.766
-    elif candidate in [CAR.SONATA, CAR.SONATA_HEV]:
-      ret.mass = 1513. + STD_CARGO_KG
-      ret.wheelbase = 2.84
-      tire_stiffness_factor = 0.65
-    elif candidate in [CAR.SONATA19, CAR.SONATA19_HEV]:
-      ret.mass = 4497. * CV.LB_TO_KG
-      ret.wheelbase = 2.804
-    elif candidate == CAR.SONATA_LF_TURBO:
-      ret.mass = 1590. + STD_CARGO_KG
-      ret.wheelbase = 2.805
-      tire_stiffness_factor = 0.65
-    elif candidate == CAR.PALISADE:
-      ret.mass = 1999. + STD_CARGO_KG
-      ret.wheelbase = 2.90
-      if eps_modified:
-        ret.maxSteeringAngleDeg = 1000.
-    elif candidate in [CAR.ELANTRA, CAR.ELANTRA_GT_I30]:
-      ret.mass = 1275. + STD_CARGO_KG
-      ret.wheelbase = 2.7
-      tire_stiffness_factor = 0.7
-    elif candidate == CAR.KONA:
-      ret.mass = 1275. + STD_CARGO_KG
-      ret.wheelbase = 2.7
-      tire_stiffness_factor = 0.7
-    elif candidate in [CAR.KONA_HEV, CAR.KONA_EV]:
-      ret.mass = 1395. + STD_CARGO_KG
-      ret.wheelbase = 2.6
-      tire_stiffness_factor = 0.7
-    elif candidate in [CAR.IONIQ, CAR.IONIQ_EV_LTD]:
-      ret.mass = 1490. + STD_CARGO_KG   #weight per hyundai site https://www.hyundaiusa.com/ioniq-electric/specifications.aspx
-      ret.wheelbase = 2.7
-      tire_stiffness_factor = 0.7
-    elif candidate in [CAR.GRANDEUR_IG, CAR.GRANDEUR_IG_HEV]:
-      tire_stiffness_factor = 0.8
-      ret.mass = 1640. + STD_CARGO_KG
-      ret.wheelbase = 2.845
-      ret.maxSteeringAngleDeg = 120.
-    elif candidate in [CAR.GRANDEUR_IG_FL, CAR.GRANDEUR_IG_FL_HEV]:
-      tire_stiffness_factor = 0.8
-      ret.mass = 1640. + STD_CARGO_KG
-      ret.wheelbase = 2.845
-      ret.maxSteeringAngleDeg = 120.
-    elif candidate == CAR.VELOSTER:
-      ret.mass = 3558. * CV.LB_TO_KG
-      ret.wheelbase = 2.80
-      tire_stiffness_factor = 0.9
-    # kia
-    elif candidate == CAR.SORENTO:
-      ret.mass = 1985. + STD_CARGO_KG
-      ret.wheelbase = 2.78
-      tire_stiffness_factor = 0.7
-    elif candidate in [CAR.K5, CAR.K5_HEV]:
-      ret.mass = 3558. * CV.LB_TO_KG
-      ret.wheelbase = 2.80
-      tire_stiffness_factor = 0.7
-    elif candidate == CAR.STINGER:
-      tire_stiffness_factor = 1.125 # LiveParameters (Tunder's 2020)
-      ret.mass = 1825.0 + STD_CARGO_KG
-      ret.wheelbase = 2.906 # https://www.kia.com/us/en/stinger/specs
-    elif candidate == CAR.FORTE:
-      ret.mass = 3558. * CV.LB_TO_KG
-      ret.wheelbase = 2.80
-      tire_stiffness_factor = 0.7
-    elif candidate == CAR.CEED:
-      ret.mass = 1350. + STD_CARGO_KG
-      ret.wheelbase = 2.65
-      tire_stiffness_factor = 0.6
-    elif candidate == CAR.SPORTAGE:
-      ret.mass = 1985. + STD_CARGO_KG
-      ret.wheelbase = 2.78
-    elif candidate in [CAR.NIRO_HEV, CAR.NIRO_EV]:
-      ret.mass = 1737. + STD_CARGO_KG
-      ret.wheelbase = 2.7
-      tire_stiffness_factor = 0.7
-    elif candidate in [CAR.K7, CAR.K7_HEV]:
-      tire_stiffness_factor = 0.7
-      ret.mass = 1650. + STD_CARGO_KG
-      ret.wheelbase = 2.855
-    elif candidate == CAR.SELTOS:
-      ret.mass = 1310. + STD_CARGO_KG
-      ret.wheelbase = 2.6
-      tire_stiffness_factor = 0.7
+    ret.maxSteeringAngleDeg = 90.
 
-
+    # lateral
     ret.lateralTuning.init('lqr')
 
     ret.lateralTuning.lqr.scale = 1700.
     ret.lateralTuning.lqr.ki = 0.01
-    ret.lateralTuning.lqr.dcGain = 0.00275
+    ret.lateralTuning.lqr.dcGain = 0.0028
 
     ret.lateralTuning.lqr.a = [0., 1., -0.22619643, 1.21822268]
     ret.lateralTuning.lqr.b = [-1.92006585e-04, 3.95603032e-05]
@@ -166,49 +61,190 @@ class CarInterface(CarInterfaceBase):
 
     ret.steerRatio = 16.5
     ret.steerActuatorDelay = 0.1
-    ret.steerLimitTimer = 1.6
-
-    ret.steerRateCost = 0.5
-
+    ret.steerLimitTimer = 2.5
+    ret.steerRateCost = 0.4
     ret.steerMaxBP = [0.]
-    ret.steerMaxV = [1.3]
+    ret.steerMaxV = [1.5]
 
-    if ret.openpilotLongitudinalControl:
+    # longitudinal
+    ret.longitudinalTuning.kpBP = [0, 10.*CV.KPH_TO_MS, 20.*CV.KPH_TO_MS, 40.*CV.KPH_TO_MS, 70.*CV.KPH_TO_MS, 100.*CV.KPH_TO_MS, 130.*CV.KPH_TO_MS]
+    ret.longitudinalTuning.kpV = [1.2, 1.05, 0.92, 0.765, 0.61, 0.5, 0.4]
+    ret.longitudinalTuning.kiBP = [0, 130. * CV.KPH_TO_MS]
+    ret.longitudinalTuning.kiV = [0.03, 0.02]
+    ret.longitudinalTuning.kfBP = [10.*CV.KPH_TO_MS, 30.*CV.KPH_TO_MS, 50.*CV.KPH_TO_MS, 80.*CV.KPH_TO_MS, 100.*CV.KPH_TO_MS, 130.*CV.KPH_TO_MS]
+    ret.longitudinalTuning.kfV = [1.0, 0.92, 0.86, 0.79, 0.76, 0.72]
+    ret.longitudinalTuning.deadzoneBP = [0., 100.*CV.KPH_TO_MS]
+    ret.longitudinalTuning.deadzoneV = [0., 0.015]
 
-      ret.longitudinalTuning.kpBP = [0., 10. * CV.KPH_TO_MS, 20. * CV.KPH_TO_MS, 40. * CV.KPH_TO_MS, 100. * CV.KPH_TO_MS]
-      ret.longitudinalTuning.kpV = [0.97, 0.82, 0.63, 0.58, 0.43]
-      ret.longitudinalTuning.kiBP = [0.]
-      ret.longitudinalTuning.kiV = [0.015]
-      ret.longitudinalTuning.kf = 0.55
-      ret.longitudinalTuning.deadzoneBP = [0., 100.*CV.KPH_TO_MS]
-      ret.longitudinalTuning.deadzoneV = [0., 0.015]
+    ret.gasMaxBP = [0., 10.*CV.KPH_TO_MS, 20.*CV.KPH_TO_MS, 50.*CV.KPH_TO_MS, 70.*CV.KPH_TO_MS, 130.*CV.KPH_TO_MS]
+    ret.gasMaxV = [0.57, 0.4, 0.32, 0.24, 0.17, 0.13]
 
-      ret.gasMaxBP = [0., 5.*CV.KPH_TO_MS, 10.*CV.KPH_TO_MS, 30.*CV.KPH_TO_MS, 36.*CV.KPH_TO_MS, 37.*CV.KPH_TO_MS, 48.*CV.KPH_TO_MS, 55.*CV.KPH_TO_MS, 70.*CV.KPH_TO_MS, 100.*CV.KPH_TO_MS]
-      ret.gasMaxV = [0.1, 0.4443, 0.6062, 0.5594, 0.4284, 0.3744, 0.1805, 0.13, 0.12, 0.1] 
+    ret.brakeMaxBP = [0, 70.*CV.KPH_TO_MS, 130.*CV.KPH_TO_MS]
+    ret.brakeMaxV = [1.5, 1.0, 0.7]
 
-      ret.brakeMaxBP = [0., 10.*CV.KPH_TO_MS, 29.*CV.KPH_TO_MS, 30.*CV.KPH_TO_MS, 50*CV.KPH_TO_MS, 65*CV.KPH_TO_MS]
-      ret.brakeMaxV = [0.28, 0.5533, 0.85201, 0.86601, 0.85601, 0.8380]
+    ret.stoppingBrakeRate = 0.2  # brake_travel/s while trying to stop
+    ret.startingBrakeRate = 1.0  # brake_travel/s while releasing on restart
+    ret.startAccel = 1.5
 
-      ret.stoppingBrakeRate = 0.165  # brake_travel/s while trying to stop
-      ret.startingBrakeRate = 0.98  # brake_travel/s while releasing on restart
-      ret.startAccel = 1.1
-
-    else:
-      # scc smoother
-      ret.longitudinalTuning.kpBP = [0., 10. * CV.KPH_TO_MS, 40. * CV.KPH_TO_MS, 100. * CV.KPH_TO_MS]
-      ret.longitudinalTuning.kpV = [1.3, 1.2, 1.0, 0.45]
-      ret.longitudinalTuning.kiBP = [0.]
-      ret.longitudinalTuning.kiV = [0.]
-      ret.longitudinalTuning.deadzoneBP = [0., 40]
-      ret.longitudinalTuning.deadzoneV = [0., 0.02]
-
-      ret.gasMaxBP = [0.]
-      ret.gasMaxV = [0.5]
-      ret.brakeMaxBP = [0., 20.]
-      ret.brakeMaxV = [1., 0.8]
+    # genesis
+    if candidate == CAR.GENESIS:
+      ret.mass = 1900. + STD_CARGO_KG
+      ret.wheelbase = 3.01
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.GENESIS_G70:
+      ret.mass = 1640. + STD_CARGO_KG
+      ret.wheelbase = 2.84
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.GENESIS_G80:
+      ret.mass = 1855. + STD_CARGO_KG
+      ret.wheelbase = 3.01
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.GENESIS_EQ900:
+      ret.mass = 2200
+      ret.wheelbase = 3.15
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.GENESIS_EQ900_L:
+      ret.mass = 2290
+      ret.wheelbase = 3.45
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.GENESIS_G90:
+      ret.mass = 2150
+      ret.wheelbase = 3.16
+      ret.centerToFront = ret.wheelbase * 0.4
+    # hyundai
+    elif candidate in [CAR.SANTA_FE]:
+      ret.mass = 1694 + STD_CARGO_KG
+      ret.wheelbase = 2.766
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.SONATA, CAR.SONATA_HEV]:
+      ret.mass = 1513. + STD_CARGO_KG
+      ret.wheelbase = 2.84
+      ret.centerToFront = ret.wheelbase * 0.4
+      tire_stiffness_factor = 0.65
+    elif candidate in [CAR.SONATA19, CAR.SONATA19_HEV]:
+      ret.mass = 4497. * CV.LB_TO_KG
+      ret.wheelbase = 2.804
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.SONATA_LF_TURBO:
+      ret.mass = 1590. + STD_CARGO_KG
+      ret.wheelbase = 2.805
+      tire_stiffness_factor = 0.65
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.PALISADE:
+      ret.mass = 1999. + STD_CARGO_KG
+      ret.wheelbase = 2.90
+      ret.centerToFront = ret.wheelbase * 0.4
+      if eps_modified:
+        ret.maxSteeringAngleDeg = 1000.
+    elif candidate in [CAR.ELANTRA, CAR.ELANTRA_GT_I30]:
+      ret.mass = 1275. + STD_CARGO_KG
+      ret.wheelbase = 2.7
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.ELANTRA_2021:
+      ret.mass = (2800. * CV.LB_TO_KG) + STD_CARGO_KG
+      ret.wheelbase = 2.72
+      ret.steerRatio = 13.27 * 1.15   # 15% higher at the center seems reasonable
+      tire_stiffness_factor = 0.65
+    elif candidate == CAR.ELANTRA_HEV_2021:
+      ret.mass = (3017. * CV.LB_TO_KG) + STD_CARGO_KG
+      ret.wheelbase = 2.72
+      ret.steerRatio = 13.27 * 1.15  # 15% higher at the center seems reasonable
+      tire_stiffness_factor = 0.65
+    elif candidate == CAR.KONA:
+      ret.mass = 1275. + STD_CARGO_KG
+      ret.wheelbase = 2.7
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.KONA_HEV, CAR.KONA_EV]:
+      ret.mass = 1395. + STD_CARGO_KG
+      ret.wheelbase = 2.6
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.IONIQ, CAR.IONIQ_EV_LTD, CAR.IONIQ_EV_2020, CAR.IONIQ_PHEV]:
+      ret.mass = 1490. + STD_CARGO_KG
+      ret.wheelbase = 2.7
+      tire_stiffness_factor = 0.385
+      #if candidate not in [CAR.IONIQ_EV_2020, CAR.IONIQ_PHEV]:
+      #  ret.minSteerSpeed = 32 * CV.MPH_TO_MS
+    elif candidate in [CAR.GRANDEUR_IG, CAR.GRANDEUR_IG_HEV]:
+      tire_stiffness_factor = 0.8
+      ret.mass = 1640. + STD_CARGO_KG
+      ret.wheelbase = 2.845
+      ret.maxSteeringAngleDeg = 120.
+      ret.centerToFront = ret.wheelbase * 0.385
+    elif candidate in [CAR.GRANDEUR_IG_FL, CAR.GRANDEUR_IG_FL_HEV]:
+      tire_stiffness_factor = 0.8
+      ret.mass = 1640. + STD_CARGO_KG
+      ret.wheelbase = 2.845
+      ret.maxSteeringAngleDeg = 120.
+      ret.centerToFront = ret.wheelbase * 0.385
+    elif candidate == CAR.VELOSTER:
+      ret.mass = 3558. * CV.LB_TO_KG
+      ret.wheelbase = 2.80
+      tire_stiffness_factor = 0.9
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.TUCSON_TL_SCC:
+      ret.mass = 1594. + STD_CARGO_KG #1730
+      ret.wheelbase = 2.67
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+      ret.maxSteeringAngleDeg = 120.
+      ret.startAccel = 0.5
+    # kia
+    elif candidate == CAR.SORENTO:
+      ret.mass = 1985. + STD_CARGO_KG
+      ret.wheelbase = 2.78
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.K5, CAR.K5_HEV]:
+      ret.mass = 3558. * CV.LB_TO_KG
+      ret.wheelbase = 2.80
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.STINGER:
+      tire_stiffness_factor = 1.125 # LiveParameters (Tunder's 2020)
+      ret.mass = 1825.0 + STD_CARGO_KG
+      ret.wheelbase = 2.906
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.FORTE:
+      ret.mass = 3558. * CV.LB_TO_KG
+      ret.wheelbase = 2.80
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.CEED:
+      ret.mass = 1350. + STD_CARGO_KG
+      ret.wheelbase = 2.65
+      tire_stiffness_factor = 0.6
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.SPORTAGE:
+      ret.mass = 1985. + STD_CARGO_KG
+      ret.wheelbase = 2.78
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.NIRO_HEV, CAR.NIRO_EV]:
+      ret.mass = 1737. + STD_CARGO_KG
+      ret.wheelbase = 2.7
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate in [CAR.K7, CAR.K7_HEV]:
+      tire_stiffness_factor = 0.7
+      ret.mass = 1650. + STD_CARGO_KG
+      ret.wheelbase = 2.855
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.SELTOS:
+      ret.mass = 1310. + STD_CARGO_KG
+      ret.wheelbase = 2.6
+      tire_stiffness_factor = 0.7
+      ret.centerToFront = ret.wheelbase * 0.4
+    elif candidate == CAR.K9:
+      ret.mass = 2005. + STD_CARGO_KG
+      ret.wheelbase = 3.15
+      ret.centerToFront = ret.wheelbase * 0.4
+      tire_stiffness_factor = 0.8
 
     ret.radarTimeStep = 0.05
-    ret.centerToFront = ret.wheelbase * 0.4
+
 
     # TODO: get actual value, for now starting with reasonable value for
     # civic and scaling by mass and wheelbase
@@ -223,9 +259,10 @@ class CarInterface(CarInterfaceBase):
     ret.steerRatioRear = 0.
     ret.steerControlType = car.CarParams.SteerControlType.torque
 
-    ret.enableCamera = True
-    ret.enableBsm = 0x58b in fingerprint[0]
     ret.stoppingControl = True
+
+    ret.enableBsm = 0x58b in fingerprint[0]
+    ret.enableAutoHold = 1151 in fingerprint[0]
 
     # ignore CAN2 address if L-CAN on the same BUS
     ret.mdpsBus = 1 if 593 in fingerprint[1] and 1296 not in fingerprint[1] else 0
@@ -233,8 +270,16 @@ class CarInterface(CarInterfaceBase):
     ret.sccBus = 0 if 1056 in fingerprint[0] else 1 if 1056 in fingerprint[1] and 1296 not in fingerprint[1] \
                                                                      else 2 if 1056 in fingerprint[2] else -1
 
+    if ret.sccBus >= 0:
+      ret.hasScc13 = 1290 in fingerprint[ret.sccBus]
+      ret.hasScc14 = 905 in fingerprint[ret.sccBus]
+
+    ret.hasEms = 608 in fingerprint[0] and 809 in fingerprint[0]
+
+    print('fingerprint', fingerprint)
+
     ret.radarOffCan = ret.sccBus == -1
-    ret.enableCruise = not ret.radarOffCan
+    ret.pcmCruise = not ret.radarOffCan
 
     # set safety_hyundai_community only for non-SCC, MDPS harrness or SCC harrness cars or cars that have unknown issue
     if ret.radarOffCan or ret.mdpsBus == 1 or ret.openpilotLongitudinalControl or ret.sccBus == 1 or Params().get_bool('MadModeEnabled'):
@@ -249,10 +294,10 @@ class CarInterface(CarInterfaceBase):
     ret = self.CS.update(self.cp, self.cp2, self.cp_cam)
     ret.canValid = self.cp.can_valid and self.cp2.can_valid and self.cp_cam.can_valid
 
-    if self.CP.enableCruise and not self.CC.scc_live:
-      self.CP.enableCruise = False
-    elif self.CC.scc_live and not self.CP.enableCruise:
-      self.CP.enableCruise = True
+    if self.CP.pcmCruise and not self.CC.scc_live:
+      self.CP.pcmCruise = False
+    elif self.CC.scc_live and not self.CP.pcmCruise:
+      self.CP.pcmCruise = True
 
     # most HKG cars has no long control, it is safer and easier to engage by main on
 
