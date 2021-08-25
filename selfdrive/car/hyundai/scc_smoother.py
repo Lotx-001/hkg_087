@@ -8,21 +8,21 @@ from selfdrive.car.hyundai.values import Buttons
 from common.params import Params
 from selfdrive.controls.lib.drive_helpers import V_CRUISE_MAX, V_CRUISE_MIN, V_CRUISE_DELTA_KM, V_CRUISE_DELTA_MI
 from selfdrive.controls.lib.lane_planner import TRAJECTORY_SIZE
-from selfdrive.controls.lib.lead_mpc import AUTO_TR_CRUISE_GAP
-from selfdrive.road_speed_limiter import road_speed_limiter_get_max_speed, road_speed_limiter_get_active
-
-SYNC_MARGIN = 3.
+from selfdrive.road_speed_limiter import road_speed_limiter_get_max_speed
 
 # do not modify
-MIN_SET_SPEED_KPH = V_CRUISE_MIN
-MAX_SET_SPEED_KPH = V_CRUISE_MAX
+MIN_SET_SPEED = V_CRUISE_MIN
+MAX_SET_SPEED = V_CRUISE_MAX
+
+LIMIT_ACCEL = 10.
+LIMIT_DECEL = 18.
 
 ALIVE_COUNT = [6, 8]
 WAIT_COUNT = [12, 13, 14, 15, 16]
 AliveIndex = 0
 WaitIndex = 0
 
-MIN_CURVE_SPEED = 32. * CV.KPH_TO_MS
+MIN_CURVE_SPEED = 32.
 
 EventName = car.CarEvent.EventName
 
@@ -30,6 +30,11 @@ ButtonType = car.CarState.ButtonEvent.Type
 ButtonPrev = ButtonType.unknown
 ButtonCnt = 0
 LongPressed = False
+
+class CruiseState:
+  STOCK = 0
+  SMOOTH = 1
+  COUNT = 2
 
 class SccSmoother:
 
@@ -51,27 +56,22 @@ class SccSmoother:
       WaitIndex = 0
     return count
 
-  def kph_to_clu(self, kph):
-    return int(kph * CV.KPH_TO_MS * self.speed_conv_to_clu)
+  def __init__(self, accel_gain, decel_gain, curvature_gain):
 
-  def __init__(self, gas_factor, brake_factor, curvature_factor):
+    self.state = int(Params().get('SccSmootherState'))
+    self.scc_smoother_enabled = Params().get_bool('SccSmootherEnabled')
+    self.slow_on_curves = Params().get_bool('SccSmootherSlowOnCurves')
+
+    self.sync_set_speed_while_gas_pressed = Params().get_bool('SccSmootherSyncGasPressed')
+    self.switch_only_with_gap = Params().get_bool('SccSmootherSwitchGapOnly')
 
     self.longcontrol = Params().get_bool('LongControlEnabled')
-    self.slow_on_curves = Params().get_bool('SccSmootherSlowOnCurves')
-    self.sync_set_speed_while_gas_pressed = Params().get_bool('SccSmootherSyncGasPressed')
-    self.is_metric = Params().get_bool('IsMetric')
-    self.fuse_with_stock = Params().get_bool('FuseWithStockScc')
 
-    self.speed_conv_to_ms = CV.KPH_TO_MS if self.is_metric else CV.MPH_TO_MS
-    self.speed_conv_to_clu = CV.MS_TO_KPH if self.is_metric else CV.MS_TO_MPH
+    self.accel_gain = accel_gain
+    self.decel_gain = decel_gain
+    self.curvature_gain = curvature_gain
 
-    self.min_set_speed_clu = self.kph_to_clu(MIN_SET_SPEED_KPH)
-    self.max_set_speed_clu = self.kph_to_clu(MAX_SET_SPEED_KPH)
-
-    self.gas_factor = clip(gas_factor, 0.7, 1.3)
-    self.brake_factor = clip(brake_factor, 0.7, 1.3)
-    self.curvature_factor = curvature_factor
-
+    self.last_cruise_buttons = Buttons.NONE
     self.target_speed = 0.
 
     self.started_frame = 0
@@ -82,15 +82,14 @@ class SccSmoother:
     self.alive_count = ALIVE_COUNT
     random.shuffle(WAIT_COUNT)
 
+    self.state_changed_alert = False
+
     self.slowing_down = False
     self.slowing_down_alert = False
     self.slowing_down_sound_alert = False
-    self.active_cam = False
 
-    self.max_speed_clu = 0.
-    self.limited_lead = False
-
-    self.curve_speed_ms = 0.
+    self.max_speed = 0.
+    self.curve_speed = 0.
 
     self.fused_decel = []
 
@@ -101,8 +100,8 @@ class SccSmoother:
     self.btn = Buttons.NONE
     self.target_speed = 0.
 
-    self.max_speed_clu = 0.
-    self.curve_speed_ms = 0.
+    self.max_speed = 0.
+    self.curve_speed = 0.
 
     self.fused_decel.clear()
 
@@ -120,7 +119,29 @@ class SccSmoother:
   def is_active(self, frame):
     return frame - self.started_frame <= max(ALIVE_COUNT) + max(WAIT_COUNT)
 
+  def dispatch_buttons(self, CC, CS):
+    changed = False
+    if self.last_cruise_buttons != CS.cruise_buttons:
+      self.last_cruise_buttons = CS.cruise_buttons
+
+      if not CS.cruiseState_enabled:
+        if (not self.switch_only_with_gap and CS.cruise_buttons == Buttons.CANCEL) or CS.cruise_buttons == Buttons.GAP_DIST:
+          self.state += 1
+          if self.state >= CruiseState.COUNT:
+            self.state = 0
+
+          Params().put('SccSmootherState', str(self.state))
+          self.state_changed_alert = True
+          changed = True
+
+    CC.sccSmoother.state = self.state
+    return changed
+
   def inject_events(self, events):
+    if self.state_changed_alert:
+      self.state_changed_alert = False
+      events.add(EventName.sccSmootherStatus)
+
     if self.slowing_down_sound_alert:
       self.slowing_down_sound_alert = False
       events.add(EventName.slowingDownSpeedSound)
@@ -129,29 +150,26 @@ class SccSmoother:
 
   def cal_max_speed(self, frame, CC, CS, sm, clu11_speed, controls):
 
-    # kph
     limit_speed, road_limit_speed, left_dist, first_started, max_speed_log = road_speed_limiter_get_max_speed(CS, controls.v_cruise_kph)
 
-    self.cal_curve_speed(sm, CS.out.vEgo, frame)
-    if self.slow_on_curves and self.curve_speed_ms >= MIN_CURVE_SPEED:
-      max_speed_clu = min(controls.v_cruise_kph * CV.KPH_TO_MS, self.curve_speed_ms) * self.speed_conv_to_clu
+    self.cal_curve_speed(sm, clu11_speed * CV.KPH_TO_MS, frame)
+    if self.slow_on_curves and self.curve_speed >= MIN_CURVE_SPEED:
+      max_speed = min(controls.v_cruise_kph, self.curve_speed)
     else:
-      max_speed_clu = self.kph_to_clu(controls.v_cruise_kph)
+      max_speed = controls.v_cruise_kph
 
-    self.active_cam = road_limit_speed > 0
+    max_speed_log = "{:.1f}/{:.1f}".format(float(limit_speed), float(clu11_speed))
 
-    #max_speed_log = "{:.1f}/{:.1f}/{:.1f}".format(float(limit_speed),
-    #                                              float(self.curve_speed_ms*self.speed_conv_to_clu),
-    #                                              float(lead_speed))
+    lead_speed = self.get_long_lead_speed(CS, clu11_speed, sm)
+    if lead_speed >= MIN_SET_SPEED:
+      max_speed = min(max_speed, lead_speed)
 
-    max_speed_log = ""
-
-    if limit_speed >= self.kph_to_clu(30):
+    if limit_speed >= 30:
 
       if first_started:
-        self.max_speed_clu = clu11_speed
+        self.max_speed = clu11_speed
 
-      max_speed_clu = min(max_speed_clu, limit_speed)
+      max_speed = min(max_speed, limit_speed)
 
       if clu11_speed > limit_speed:
 
@@ -168,55 +186,59 @@ class SccSmoother:
       self.slowing_down_alert = False
       self.slowing_down = False
 
-    lead_speed = self.get_long_lead_speed(CS, clu11_speed, sm)
-
-    if lead_speed >= self.min_set_speed_clu:
-      if lead_speed < max_speed_clu:
-        max_speed_clu = min(max_speed_clu, lead_speed)
-
-        if not self.limited_lead:
-          self.max_speed_clu = clu11_speed + 3.
-          self.limited_lead = True
-    else:
-      self.limited_lead = False
-
-    self.update_max_speed(int(max_speed_clu + 0.5))
+    self.update_max_speed(int(max_speed + 0.5))
 
     return road_limit_speed, left_dist, max_speed_log
 
   def update(self, enabled, can_sends, packer, CC, CS, frame, apply_accel, controls):
 
-    # mph or kph
     clu11_speed = CS.clu11["CF_Clu_Vanz"]
-
     road_limit_speed, left_dist, max_speed_log = self.cal_max_speed(frame, CC, CS, controls.sm, clu11_speed, controls)
-
-    CC.sccSmoother.roadLimitSpeedActive = road_speed_limiter_get_active()
     CC.sccSmoother.roadLimitSpeed = road_limit_speed
     CC.sccSmoother.roadLimitSpeedLeftDist = left_dist
 
-    # kph
-    controls.cruiseVirtualMaxSpeed = float(clip(CS.cruiseState_speed * CV.MS_TO_KPH, MIN_SET_SPEED_KPH,
-                                                self.max_speed_clu * self.speed_conv_to_ms * CV.MS_TO_KPH))
+    controls.cruiseVirtualMaxSpeed = float(clip(CS.cruiseState_speed * CV.MS_TO_KPH, MIN_SET_SPEED, self.max_speed))
+
     CC.sccSmoother.longControl = self.longcontrol
     CC.sccSmoother.cruiseVirtualMaxSpeed = controls.cruiseVirtualMaxSpeed
     CC.sccSmoother.cruiseRealMaxSpeed = controls.v_cruise_kph
-
-    CC.sccSmoother.autoTrGap = AUTO_TR_CRUISE_GAP
 
     ascc_enabled = CS.acc_mode and enabled and CS.cruiseState_enabled \
                    and 1 < CS.cruiseState_speed < 255 and not CS.brake_pressed
 
     if not self.longcontrol:
-      if not ascc_enabled or CS.standstill or CS.cruise_buttons != Buttons.NONE:
+      if not self.scc_smoother_enabled:
+        self.reset()
+        return
+
+      if self.dispatch_buttons(CC, CS):
+        self.reset()
+        return
+
+      if self.state == CruiseState.STOCK or not ascc_enabled or CS.standstill or CS.cruise_buttons != Buttons.NONE:
+
+        #CC.sccSmoother.logMessage = '{:.2f},{:d},{:d},{:d},{:d},{:.1f},{:d},{:d},{:d}' \
+        #  .format(float(apply_accel*CV.MS_TO_KPH), int(CS.acc_mode), int(enabled), int(CS.cruiseState_enabled), int(CS.standstill), float(CS.cruiseState_speed),
+        #          int(CS.cruise_buttons), int(CS.brake_pressed), int(CS.gas_pressed))
+
+        CC.sccSmoother.logMessage = max_speed_log
         self.reset()
         self.wait_timer = max(ALIVE_COUNT) + max(WAIT_COUNT)
         return
 
-    if not ascc_enabled:
-      self.reset()
+      accel, override_acc = self.cal_acc(apply_accel, CS, clu11_speed, controls.sm)
 
-    self.cal_target_speed(CS, clu11_speed, controls)
+    else:
+      accel = 0.
+      CC.sccSmoother.state = self.state = CruiseState.STOCK
+
+      if not ascc_enabled:
+        self.reset()
+
+    self.cal_target_speed(accel, CC, CS, clu11_speed, controls)
+
+    #CC.sccSmoother.logMessage = '{:.1f}/{:.1f}, {:d}/{:d}/{:d}, {:d}' \
+    #  .format(float(override_acc), float(accel), int(self.target_speed), int(self.curve_speed), int(road_limit_speed), int(self.btn))
 
     CC.sccSmoother.logMessage = max_speed_log
 
@@ -225,7 +247,7 @@ class SccSmoother:
     elif ascc_enabled:
 
       if self.alive_timer == 0:
-        self.btn = self.get_button(CS.cruiseState_speed * self.speed_conv_to_clu)
+        self.btn = self.get_button(clu11_speed, CS.cruiseState_speed * CV.MS_TO_KPH)
         self.alive_count = SccSmoother.get_alive_count()
 
       if self.btn != Buttons.NONE:
@@ -242,15 +264,16 @@ class SccSmoother:
           self.wait_timer = SccSmoother.get_wait_count()
           self.btn = Buttons.NONE
       else:
-        if self.longcontrol and self.target_speed >= self.min_set_speed_clu:
+        if self.longcontrol and self.target_speed >= MIN_SET_SPEED:
           self.target_speed = 0.
     else:
       if self.longcontrol:
         self.target_speed = 0.
 
-  def get_button(self, current_set_speed):
 
-    if self.target_speed < self.min_set_speed_clu:
+  def get_button(self, clu11_speed, current_set_speed):
+
+    if self.target_speed < MIN_SET_SPEED:
       return Buttons.NONE
 
     error = self.target_speed - current_set_speed
@@ -267,21 +290,57 @@ class SccSmoother:
 
     return None
 
+  def cal_acc(self, apply_accel, CS, clu11_speed, sm):
+
+    cruise_gap = clip(CS.cruise_gap, 1., 4.)
+
+    override_acc = 0.
+    #v_ego = clu11_speed * CV.KPH_TO_MS
+    op_accel = apply_accel * CV.MS_TO_KPH
+
+    lead = self.get_lead(sm)
+    if lead is None:
+      accel = op_accel
+    else:
+
+      d = lead.dRel - 5.
+
+      # Tuned by stonerains
+
+      if 0. < d < -lead.vRel * (7.7 + cruise_gap) * 2. and lead.vRel < -1.:
+        t = d / lead.vRel
+        acc = -(lead.vRel / t) * CV.MS_TO_KPH * 1.84
+        override_acc = acc
+        accel = (op_accel + acc) / 2.
+      else:
+        if 40 > lead.dRel > 12 and clu11_speed < 15.0 * CV.MS_TO_KPH:
+          accel = op_accel * 3.8
+        else:
+          accel = op_accel * interp(clu11_speed, [0., 30., 38., 50., 51., 60., 100.],
+                                    [2.3, 3.4, 3.2, 1.7, 1.65, 1.4, 1.0])
+
+    if accel > 0.:
+      accel *= self.accel_gain * interp(clu11_speed, [35., 60., 100.], [1.5, 1.25, 1.2])
+    else:
+      accel *= self.decel_gain * 1.8
+
+    return clip(accel, -LIMIT_DECEL, LIMIT_ACCEL), override_acc
+
   def get_long_lead_speed(self, CS, clu11_speed, sm):
 
-    if self.longcontrol:
+    if self.longcontrol and self.scc_smoother_enabled:
       lead = self.get_lead(sm)
       if lead is not None:
         d = lead.dRel - 5.
-        #cruise_gap = clip(CS.cruise_gap, 1., 4.)
-        if 0. < d < -lead.vRel * (9. + 3.) * 2. and lead.vRel < -1.:
+        cruise_gap = clip(CS.cruise_gap, 1., 4.)
+        if 0. < d < -lead.vRel * (9. + cruise_gap) * 2. and lead.vRel < -1.:
           t = d / lead.vRel
-          accel = -(lead.vRel / t) * self.speed_conv_to_clu
-          accel *= 1.4
+          accel = -(lead.vRel / t) * CV.MS_TO_KPH
+          accel *= self.decel_gain * 1.6
 
           if accel < 0.:
             target_speed = clu11_speed + accel
-            target_speed = max(target_speed, self.min_set_speed_clu)
+            target_speed = max(target_speed, MIN_SET_SPEED)
             return target_speed
 
     return 0
@@ -296,50 +355,50 @@ class SccSmoother:
         dy = np.gradient(y, x)
         d2y = np.gradient(dy, x)
         curv = d2y / (1 + dy ** 2) ** 1.5
-
-        start = int(interp(v_ego, [10., 35.], [5, TRAJECTORY_SIZE-10]))
-        curv = curv[start:min(start+10, TRAJECTORY_SIZE)]
+        curv = curv[5:TRAJECTORY_SIZE-10]
         a_y_max = 2.975 - v_ego * 0.0375  # ~1.85 @ 75mph, ~2.6 @ 25mph
         v_curvature = np.sqrt(a_y_max / np.clip(np.abs(curv), 1e-4, None))
-        model_speed = np.mean(v_curvature) * 0.85 * self.curvature_factor
+        model_speed = np.mean(v_curvature) * 0.9 * self.curvature_gain
 
         if model_speed < v_ego:
-          self.curve_speed_ms = float(max(model_speed, MIN_CURVE_SPEED))
+          self.curve_speed = float(max(model_speed * CV.MS_TO_KPH, MIN_CURVE_SPEED))
         else:
-          self.curve_speed_ms = 255.
+          self.curve_speed = 300.
 
-        if np.isnan(self.curve_speed_ms):
-          self.curve_speed_ms = 255.
+        if np.isnan(self.curve_speed):
+          self.curve_speed = 300.
       else:
-        self.curve_speed_ms = 255.
+        self.curve_speed = 300.
 
-  def cal_target_speed(self, CS, clu11_speed, controls):
+  def cal_target_speed(self, accel, CC, CS, clu11_speed, controls):
 
     if not self.longcontrol:
-      if CS.gas_pressed and self.sync_set_speed_while_gas_pressed and CS.cruise_buttons == Buttons.NONE:
-        if clu11_speed + SYNC_MARGIN > self.kph_to_clu(controls.v_cruise_kph):
-          set_speed = clip(clu11_speed + SYNC_MARGIN, self.min_set_speed_clu, self.max_set_speed_clu)
-          controls.v_cruise_kph = set_speed * self.speed_conv_to_ms * CV.MS_TO_KPH
+      if CS.gas_pressed:
+        self.target_speed = clu11_speed
+        if clu11_speed > controls.v_cruise_kph and self.sync_set_speed_while_gas_pressed:
+          set_speed = clip(clu11_speed, MIN_SET_SPEED, MAX_SET_SPEED)
+          controls.v_cruise_kph = set_speed
+      else:
+        self.target_speed = clu11_speed + accel
+        #self.target_speed = controls.v_cruise_kph
 
-      self.target_speed = self.kph_to_clu(controls.v_cruise_kph)
+      if self.max_speed > MIN_SET_SPEED:
+        self.target_speed = clip(self.target_speed, MIN_SET_SPEED, self.max_speed)
 
-      if self.max_speed_clu > self.min_set_speed_clu:
-        self.target_speed = clip(self.target_speed, self.min_set_speed_clu, self.max_speed_clu)
-
-    elif CS.cruiseState_enabled:
-      if CS.gas_pressed and self.sync_set_speed_while_gas_pressed and CS.cruise_buttons == Buttons.NONE:
-        if clu11_speed + SYNC_MARGIN > self.kph_to_clu(controls.v_cruise_kph):
-          set_speed = clip(clu11_speed + SYNC_MARGIN, self.min_set_speed_clu, self.max_set_speed_clu)
+    else:
+      if CS.gas_pressed and CS.cruiseState_enabled:
+        if clu11_speed + 2. > controls.v_cruise_kph and self.sync_set_speed_while_gas_pressed:
+          set_speed = clip(clu11_speed + 2., MIN_SET_SPEED, MAX_SET_SPEED)
           self.target_speed = set_speed
 
   def update_max_speed(self, max_speed):
 
-    if not self.longcontrol or self.max_speed_clu <= 0:
-      self.max_speed_clu = max_speed
+    if not self.longcontrol or self.max_speed <= 0:
+      self.max_speed = max_speed
     else:
       kp = 0.01
-      error = max_speed - self.max_speed_clu
-      self.max_speed_clu = self.max_speed_clu + error * kp
+      error = max_speed - self.max_speed
+      self.max_speed = self.max_speed + error * kp
 
   def get_fused_accel(self, apply_accel, stock_accel, sm):
 
@@ -348,44 +407,27 @@ class SccSmoother:
     if lead is not None:
       dRel = lead.dRel
 
-      if self.fuse_with_stock and lead.radar:
-        if stock_accel > 0.:
-          stock_weight = interp(dRel, [4., 25.], [0.7, 0.])
-        else:
-          stock_weight = interp(dRel, [4., 25.], [1., 0.])
+      if stock_accel < apply_accel < -0.1:
+        stock_weight = interp(dRel, [2., 25.], [1., 0.])
         apply_accel = apply_accel * (1. - stock_weight) + stock_accel * stock_weight
 
-    return apply_accel, dRel
+    self.fused_decel.append(apply_accel)
+    if len(self.fused_decel) > 3:
+      self.fused_decel.pop(0)
 
-  def get_accel(self, CS, sm, accel):
-
-    gas_factor = clip(self.gas_factor, 0.7, 1.3)
-    brake_factor = clip(self.brake_factor, 0.7, 1.3)
-
-    lead = self.get_lead(sm)
-    if lead is not None:
-      if not lead.radar:
-        brake_factor *= 0.93
-
-    if accel > 0:
-      accel *= gas_factor
-    else:
-      accel *= brake_factor
-
-    return accel
+    return mean(self.fused_decel), dRel
 
   @staticmethod
-  def update_cruise_buttons(controls, CS, longcontrol):  # called by controlds's state_transition
+  def update_cruise_buttons(controls, CS, longcontrol): # called by controlds's state_transition
 
     car_set_speed = CS.cruiseState.speed * CV.MS_TO_KPH
-    is_cruise_enabled = car_set_speed != 0 and car_set_speed != 255 and CS.cruiseState.enabled and controls.CP.pcmCruise
+    is_cruise_enabled = car_set_speed != 0 and car_set_speed != 255 and CS.cruiseState.enabled and controls.CP.enableCruise
 
     if is_cruise_enabled:
-      if longcontrol:
+      if longcontrol or controls.CC.sccSmoother.state == CruiseState.STOCK:
         v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
       else:
-        v_cruise_kph = SccSmoother.update_v_cruise(controls.v_cruise_kph, CS.buttonEvents, controls.enabled,
-                                                   controls.is_metric)
+        v_cruise_kph = SccSmoother.update_v_cruise(controls.v_cruise_kph, CS.buttonEvents, controls.enabled, controls.is_metric)
     else:
       v_cruise_kph = 0
 
@@ -400,6 +442,7 @@ class SccSmoother:
       controls.LoC.reset(v_pid=CS.vEgo)
 
     controls.v_cruise_kph = v_cruise_kph
+
 
   @staticmethod
   def update_v_cruise(v_cruise_kph, buttonEvents, enabled, metric):
@@ -427,6 +470,7 @@ class SccSmoother:
         elif ButtonPrev == ButtonType.decelCruise:
           v_cruise_kph -= V_CRUISE_DELTA - -v_cruise_kph % V_CRUISE_DELTA
         ButtonCnt %= 70
-      v_cruise_kph = clip(v_cruise_kph, MIN_SET_SPEED_KPH, MAX_SET_SPEED_KPH)
+      v_cruise_kph = clip(v_cruise_kph, MIN_SET_SPEED, MAX_SET_SPEED)
 
     return v_cruise_kph
+ 
